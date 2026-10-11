@@ -13,15 +13,10 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  # -----------------------------------------------------------------
-  # musl static build: uses prebuilt librusty_v8_release_aarch64-unknown-linux-musl.a.gz
-  # (no V8 source build needed — moli-renderer-v8 does NOT enable
-  #  v8_enable_pointer_compression for the musl target)
-  # -----------------------------------------------------------------
   build-musl:
-    name: aarch64-unknown-linux-musl (prebuilt V8)
+    name: aarch64-unknown-linux-musl (prebuilt V8, zig linker)
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - name: Checkout moli source
         uses: actions/checkout@v4
@@ -41,23 +36,67 @@ jobs:
           rustc --version
           rustup target add aarch64-unknown-linux-musl
 
-      - name: Install musl cross linker
+      - name: Install zig (musl cross C compiler + linker)
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools
-          aarch64-linux-musl-gcc --version
+          curl -fsSL -o zig.tar.xz \
+            https://ziglang.org/builds/zig-linux-x86_64-0.12.0.tar.xz
+          tar xf zig.tar.xz
+          mv zig-linux-x86_64-0.12.0 zig
+          echo "$PWD/zig" >> "$GITHUB_PATH"
+          zig version
 
-      - name: Build moli (musl, prebuilt V8)
+      - name: Build moli (musl via zig)
         run: |
           set -euo pipefail
-          # Link statically against musl: use aarch64-linux-musl-gcc as rustc's linker driver.
-          # V8: download prebuilt aarch64-unknown-linux-musl archive (no V8_FROM_SOURCE needed).
-          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc
-          export CC=aarch64-linux-musl-gcc
-          export CXX=aarch64-linux-musl-g++
-          # aws-lc-rs / openssl / curl all need C cross compilation; keep default features on.
-          # --no-default-features would drop jemalloc, fine for musl.
+          # zig emulates GCC for the cc crate: "zig cc" = C compiler, "zig c++" = C++
+          # --target aarch64-linux-musl gives fully static musl binary
+          export ZIG_TARGET=aarch64-linux-musl
+          # rustc's linker: use zig as a GCC-compatible driver
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$PWD/zig/zig"
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER_FLAGS="-target aarch64-linux-musl --release -Wl,--build-id"
+          # C dependencies (aws-lc, curl, etc.) via zig as cc crate backend
+          export CC="$PWD/zig/zig"
+          export CXX="$PWD/zig/zig"
+          # cc crate calls $CC with gcc args; zig needs "cc" or "c++" subcommand prefix
+          # Use wrapper scripts instead:
+          cat > /usr/local/bin/zig-cc-wrapper <<'EOF'
+#!/bin/bash
+# Translate gcc-style CC args to zig cc
+args=()
+for a in "$@"; do
+  case "$a" in
+    -target:aarch64-linux-musl) ;; # strip, zig handles target
+    *) args+=("$a") ;;
+  esac
+done
+exec zig cc --target aarch64-linux-musl --release "${args[@]}"
+EOF
+          cat > /usr/local/bin/zig-cxx-wrapper <<'EOF'
+#!/bin/bash
+args=()
+for a in "$@"; do
+  case "$a" in
+    -target:aarch64-linux-musl) ;;
+    *) args+=("$a") ;;
+  esac
+done
+exec zig c++ --target aarch64-linux-musl --release "${args[@]}"
+EOF
+          # Note: these wrappers can't be in /usr/local/bin without sudo; put in $HOME/.local/bin
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/zig-cc" <<'EOF'
+#!/bin/bash
+exec "$ZIG_PATH" cc --target aarch64-linux-musl --release "$@"
+EOF
+          cat > "$HOME/.local/bin/zig-cxx" <<'EOF'
+#!/bin/bash
+exec "$ZIG_PATH" c++ --target aarch64-linux-musl --release "$@"
+EOF
+          chmod +x "$HOME/.local/bin/zig-cc" "$HOME/.local/bin/zig-cxx"
+          export PATH="$HOME/.local/bin:$PATH"
+          export ZIG_PATH="$PWD/zig/zig"
+
           cargo build --release \
             --target aarch64-unknown-linux-musl \
             --package moli
