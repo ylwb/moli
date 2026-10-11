@@ -13,10 +13,13 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  build-android:
-    name: NDK aarch64-linux-android
+  # -----------------------------------------------------------------
+  # Option A: musl static build (Termux-friendly, prebuilt V8)
+  # -----------------------------------------------------------------
+  build-musl:
+    name: aarch64-unknown-linux-musl
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 120
     steps:
       - name: Checkout moli source
         uses: actions/checkout@v4
@@ -27,75 +30,111 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Install Rust pinned toolchain + android target
+      - name: Install Rust + musl target
         run: |
           set -euo pipefail
           toolchain="$(tr -d '[:space:]' < rust-toolchain)"
           rustup toolchain install "$toolchain" --profile minimal --no-self-update
           rustup default "$toolchain"
           rustc --version
+          rustup target add aarch64-unknown-linux-musl
+
+      - name: Install musl cross linker (musl-tools)
+        run: |
+          set -euo pipefail
+          # ubuntu-24.04 has musl-tools (provides aarch64-linux-musl-gcc)
+          apt-get update
+          apt-get install -y --no-install-recommends musl-tools
+
+      - name: Build moli (musl, prebuilt V8)
+        run: |
+          set -euo pipefail
+          # Static musl: need aarch64-linux-musl-gcc as linker driver
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc
+          export CC=aarch64-linux-musl-gcc
+          export CXX=aarch64-linux-musl-g++
+          # Tell cc crate to use musl sysroot
+          # RUSTY_V8_PREBUILT: use the musl archive (no V8_FROM_SOURCE needed)
+          # moli uses v8_enable_pointer_compression, so the file is
+          # librusty_v8_ptrcomp_release_aarch64-unknown-linux-musl.a.gz
+          cargo build --release \
+            --target aarch64-unknown-linux-musl \
+            --package moli \
+            --no-default-features
+
+      - name: Inspect binary
+        run: |
+          set -euo pipefail
+          bin=target/aarch64-unknown-linux-musl/release/moli
+          file "$bin"
+          ls -lh "$bin"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: moli-aarch64-linux-musl
+          path: target/aarch64-unknown-linux-musl/release/moli
+          if-no-files-found: error
+          retention-days: 30
+
+  # -----------------------------------------------------------------
+  # Option B: Android NDK cross build (V8 from source, slow)
+  # Only run if musl version doesn't work in Termux.
+  # -----------------------------------------------------------------
+  build-android:
+    name: NDK aarch64-linux-android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    needs: build-musl  # only run if musl job ran
+    steps:
+      - name: Checkout moli source
+        uses: actions/checkout@v4
+        with:
+          repository: lexmount/moli
+          ref: main
+          submodules: recursive
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install Rust + android target
+        run: |
+          set -euo pipefail
+          toolchain="$(tr -d '[:space:]' < rust-toolchain)"
+          rustup toolchain install "$toolchain" --profile minimal --no-self-update
+          rustup default "$toolchain"
           rustup target add aarch64-linux-android
 
-      - name: Download Android NDK r26c
+      - name: Download NDK + depot_tools
         run: |
           set -uo pipefail
-          if ! command -v unzip >/dev/null; then
-            apt-get update
-            apt-get install -y --no-install-recommends unzip
-          fi
+          apt-get update
+          apt-get install -y --no-install-recommends unzip python3-pip
           curl -fsSL -o ndk.zip https://dl.google.com/android/repository/android-ndk-r26c-linux.zip
           unzip -q -o ndk.zip
           ndk_dir="$(find . -maxdepth 1 -type d -name 'android-ndk-r26c' | head -n1)"
-          if [ -z "$ndk_dir" ]; then
-            echo "NDK dir not found; tree:"; ls -la; exit 1
-          fi
-          ndk_dir="${ndk_dir#./}"
-          ndk_bin="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          sysroot="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
-          echo "ANDROID_NDK_HOME=$ndk_dir" >> "$GITHUB_ENV"
-          echo "$ndk_bin" >> "$GITHUB_PATH"
-          echo "NDK_BIN=$ndk_bin" >> "$GITHUB_ENV"
-          echo "NDK_SYSROOT=$sysroot" >> "$GITHUB_ENV"
-          "$ndk_bin/aarch64-linux-android21-clang" --version
-          ls "$sysroot/usr/include" | head
+          echo "ANDROID_NDK_HOME=${ndk_dir#./}" >> "$GITHUB_ENV"
+          echo "${ndk_dir#./}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+          # gclient for V8 source build
+          pip3 install --user gclient || pip3 install gclient
 
-      - name: Build moli (V8 from source, cross android)
+      - name: Build moli (android NDK, V8 from source)
         run: |
           set -euo pipefail
           export NDK_CROSS_PREFIX="aarch64-linux-android21"
-          # C compiler for cc crate (build scripts of C dependencies like aws-lc-rs)
-          export CC="$NDK_BIN/$NDK_CROSS_PREFIX-clang"
-          export CXX="$NDK_BIN/$NDK_CROSS_PREFIX-clang++"
-          export AR="$NDK_BIN/ar"
+          export CC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$NDK_CROSS_PREFIX-clang"
+          export CXX="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$NDK_CROSS_PREFIX-clang++"
           export TARGET=aarch64-linux-android
           export HOST=x86_64-unknown-linux-gnu
           export API_LEVEL=26
           export ANDROID_PLATFORM=android-26
           export V8_FROM_SOURCE=1
-          # rust_v8 build.rs GN args for Android cross build
           export EXTRA_GN_ARGS='target_os="android" v8_target_cpu="arm64" target_cpu="arm64" android_api_level=26'
-          # bindgen (used by aws-lc-sys / rustls / curl-sys / openssl-sys) needs NDK sysroot
-          export BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-linux-android21 --sysroot=$NDK_SYSROOT -I$NDK_SYSROOT/usr/include"
-          # V8 host toolchain: gn/ninja need Python, ubuntu-24.04 has it
-          python3 --version
-          ninja --version || (apt-get update && apt-get install -y --no-install-recommends ninja-build)
-          gclient --version || (
-            apt-get update && apt-get install -y --no-install-recommends python3-pip
-            pip3 install --break-system-packages depot_tools
-          )
-          "$NDK_BIN/$NDK_CROSS_PREFIX-clang" --version
           cargo build --release \
             --target aarch64-linux-android \
-            --package moli
+            --package moli \
+            --no-default-features
 
-      - name: Inspect binary
-        run: |
-          set -euo pipefail
-          bin=target/aarch64-linux-android/release/moli
-          file "$bin" || true
-          ls -lh "$bin"
-
-      - name: Upload artifact
+      - name: Upload android artifact
         uses: actions/upload-artifact@v4
         with:
           name: moli-aarch64-linux-android
