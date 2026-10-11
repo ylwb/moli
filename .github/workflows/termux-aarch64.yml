@@ -48,20 +48,6 @@ jobs:
           echo "=== NDK installed ==="
           ls /opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/ | grep aarch64
 
-      - name: Patch NDK sysroot with kernel asm headers
-        run: |
-          set -uo pipefail
-          NDK_SYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot
-          echo "=== downloading linux kernel headers ==="
-          curl -fsSL --max-time 300 -o /tmp/linux-kernel.tar.xz \
-            https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.tar.xz
-          ls -lh /tmp/linux-kernel.tar.xz
-          tar xf /tmp/linux-kernel.tar.xz -C /tmp linux-6.6/include linux-6.6/arch/arm64/include/uapi/asm
-          # Point NDK sysroot's asm/ to kernel's aarch64 UAPI asm headers
-          sudo ln -sf /tmp/linux-6.6/arch/arm64/include/uapi/asm "$NDK_SYSROOT/usr/include/asm"
-          sudo ln -sf /tmp/linux-6.6/include/asm-generic "$NDK_SYSROOT/usr/include/asm-generic"
-          echo "=== sysroot patched ==="
-          ls "$NDK_SYSROOT/usr/include/" | grep -E "^asm"
 
       - name: Download zig (linker only)
         run: |
@@ -83,9 +69,28 @@ jobs:
           $clang --version
 
           # Create CC wrapper: NDK clang, force musl target, use NDK sysroot headers
-          printf '#!/bin/bash\nCLANG_DIR=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin\nSYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot\nargs=()\nprev_was_target=0\nfor a in "$@"; do\n  if [ "$prev_was_target" = "1" ]; then prev_was_target=0; continue; fi\n  case "$a" in\n    --target=*|-target=*) : ;;\n    --target|-target) prev_was_target=1 ;;\n    *) args+=("$a") ;;\n  esac\ndone\nexec "$CLANG_DIR/aarch64-linux-android21-clang" --target=aarch64-linux-gnu --sysroot="$SYSROOT" "${args[@]}"\n' > cc-ndk
+          NDK_SYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot
+          # Add kernel asm/ headers to NDK sysroot (fixes missing asm/types.h)
+          echo "=== patching NDK sysroot with kernel headers ==="
+          curl -fsSL --max-time 300 -o /tmp/linux-kernel.tar.xz \
+            https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.tar.xz
+          tar xf /tmp/linux-kernel.tar.xz -C /tmp \
+            linux-6.6/include \
+            linux-6.6/arch/arm64/include/uapi/asm
+          # NDK sysroot does not have a/ dir; create the include search path it uses
+          # NDK clang --target=aarch64-linux-gnu searches sysroot/usr/include and sysroot/usr/include/aarch64-linux-gnu
+          sudo ln -sf /tmp/linux-6.6/arch/arm64/include/uapi/asm "$NDK_SYSROOT/usr/include/asm"
+          echo "asm linked: $(ls -la "$NDK_SYSROOT/usr/include/asm" 2>&1 | head -1)"
+          # Also add -I to kernel include dir so linux/ headers resolve correctly
+          echo "=== testing linux/types.h compile ==="
+          printf '#include <linux/types.h>\nint main(){return 0;}' > /tmp/linux-test.c
+          "$CLANG_DIR/aarch64-linux-android21-clang" --target=aarch64-linux-gnu --sysroot="$NDK_SYSROOT" \
+            -I /tmp/linux-6.6/include -c -o /tmp/linux-test.o /tmp/linux-test.c \
+            && echo "linux/types.h compile OK" || echo "linux/types.h compile FAILED"
+
+          printf '#!/bin/bash\nCLANG_DIR=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin\nSYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot\nargs=()\nprev_was_target=0\nfor a in "$@"; do\n  if [ "$prev_was_target" = "1" ]; then prev_was_target=0; continue; fi\n  case "$a" in\n    --target=*|-target=*) : ;;\n    --target|-target) prev_was_target=1 ;;\n    *) args+=("$a") ;;\n  esac\ndone\nexec "$CLANG_DIR/aarch64-linux-android21-clang" --target=aarch64-linux-gnu --sysroot="$SYSROOT" -I /tmp/linux-6.6/include "${args[@]}"\n' > cc-ndk
           chmod +x cc-ndk
-          printf '#!/bin/bash\nCLANG_DIR=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin\nSYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot\nargs=()\nprev_was_target=0\nfor a in "$@"; do\n  if [ "$prev_was_target" = "1" ]; then prev_was_target=0; continue; fi\n  case "$a" in\n    --target=*|-target=*) : ;;\n    --target|-target) prev_was_target=1 ;;\n    *) args+=("$a") ;;\n  esac\ndone\nexec "$CLANG_DIR/aarch64-linux-android21-clang++" --target=aarch64-linux-gnu --sysroot="$SYSROOT" "${args[@]}"\n' > cxx-ndk
+          printf '#!/bin/bash\nCLANG_DIR=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin\nSYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot\nargs=()\nprev_was_target=0\nfor a in "$@"; do\n  if [ "$prev_was_target" = "1" ]; then prev_was_target=0; continue; fi\n  case "$a" in\n    --target=*|-target=*) : ;;\n    --target|-target) prev_was_target=1 ;;\n    *) args+=("$a") ;;\n  esac\ndone\nexec "$CLANG_DIR/aarch64-linux-android21-clang++" --target=aarch64-linux-gnu --sysroot="$SYSROOT" -I /tmp/linux-6.6/include "${args[@]}"\n' > cxx-ndk
           chmod +x cxx-ndk
 
           # Self-test: compile a trivial C file
