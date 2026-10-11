@@ -155,6 +155,12 @@ jobs:
             mv "$NDK_SYSROOT/usr/include/arpa/inet.h.patched" "$NDK_SYSROOT/usr/include/arpa/inet.h"
             echo "patched arpa/inet.h to include netinet/in.h first"
           fi
+          # Patch moli-system-fonts: enable dlopen for fontconfig-sys AND fontique fontconfig-dlopen
+          sed -i 's/yeslogic-fontconfig-sys = "=6.0.1"/yeslogic-fontconfig-sys = { version = "=6.0.1", features = ["dlopen"] }/' moli-system-fonts/Cargo.toml
+          sed -i 's/fontique = "=0.11.0"/fontique = { version = "=0.11.0", features = ["fontconfig-dlopen"] }/' moli-system-fonts/Cargo.toml
+          echo "patched moli-system-fonts/Cargo.toml:"
+          grep -E "fontique|fontconfig-sys" moli-system-fonts/Cargo.toml
+
           cargo build --release \
             --target aarch64-unknown-linux-musl \
             --package moli
