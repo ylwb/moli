@@ -105,8 +105,11 @@ jobs:
           chmod +x cxx-ndk
 
           # Create ndk-guard.h with printf (avoids heredoc YAML issues)
-          printf '/* NDK guard: pre-include stdint.h to reduce redefinition clashes */\n' > /opt/ndk-guard.h
+          printf '/* NDK guard: pre-define glibc-style types missing from bionic */\n' > /opt/ndk-guard.h
           printf '#include <stdint.h>\n' >> /opt/ndk-guard.h
+          printf '#ifndef in_addr_t\n' >> /opt/ndk-guard.h
+          printf '#define in_addr_t uint32_t\n' >> /opt/ndk-guard.h
+          printf '#endif\n' >> /opt/ndk-guard.h
           chmod 644 /opt/ndk-guard.h
 
           # Self-test: compile a trivial C file
