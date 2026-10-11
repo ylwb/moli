@@ -16,9 +16,9 @@ jobs:
   build-android:
     name: NDK aarch64-linux-android
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
-      - name: Checkout fork
+      - name: Checkout moli source
         uses: actions/checkout@v4
         with:
           repository: lexmount/moli
@@ -27,14 +27,14 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Install Rust pinned toolchain
+      - name: Install Rust pinned toolchain + android target
         run: |
           set -euo pipefail
           toolchain="$(tr -d '[:space:]' < rust-toolchain)"
           rustup toolchain install "$toolchain" --profile minimal --no-self-update
           rustup default "$toolchain"
           rustc --version
-          rustup target add aarch64-linux-android26
+          rustup target add aarch64-linux-android
 
       - name: Download Android NDK r26c
         run: |
@@ -46,128 +46,34 @@ jobs:
           echo "ANDROID_NDK_HOME=${ndk_dir#./}" >> "$GITHUB_ENV"
           echo "${ndk_dir#./}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
           aarch64-linux-android26-clang --version
-          aarch64-linux-android26-clang++ --version
 
-      - name: Install libssl and build static libcurl (NDK)
+      - name: Build moli (V8 from source, cross android)
         run: |
           set -euo pipefail
-          apt-get update
-          apt-get install -y --no-install-recommends cmake ninja-build \
-            libssl-dev pkg-config
-
-          # Build a static libcurl with OpenSSL for bionic, place it where
-          # cc/cmake look, and hand its flags to the curl-sys build script.
-          curl -fsSL -o curl-8.21.0.tar.gz \
-            https://curl.se/download/curl-8.21.0.tar.gz
-          tar xzf curl-8.21.0.tar.gz
-
-          mkdir -p curl-static-build
-          cmake -S curl-8.21.0 -B curl-static-build -G Ninja \
-            -DCURL_STATIC=ON \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DBUILD_TESTING=OFF \
-            -DCURL_USE_OPENSSL=ON \
-            -DOPENSSL_ROOT_DIR="$HOME/.local/static/ssl" \
-            -DCMAKE_TOOLCHAIN_FILE= 2>/dev/null || true
-
-          # Cross CMake via NDK toolchain file
-          cmake --version
-          CC=clang CXX=clang++ cmake -S curl-8.21.0 -B curl-static-build -G Ninja \
-            -DCURL_STATIC=ON \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DBUILD_TESTING=OFF \
-            -DCURL_USE_OPENSSL=ON \
-            -DOPENSSL_ROOT_DIR= \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-26 \
-            -DCMAKE_SYSTEM_NAME=Android \
-            -DCMAKE_ANDROID_NDK="${ANDROID_NDK_HOME}" \
-            -DCMAKE_ANDROID_ABI=arm64-v8a \
-            -DCMAKE_BUILD_TYPE=Release
-          cmake --build curl-static-build
-          ls -lh curl-static-build/libcurl.a
-
-      - name: Build moli
-        run: |
-          set -euo pipefail
-          clang_version="aarch64-linux-android26-clang"
-          cc="${clang_version}" cxx="${clang_version}+" \
-          cmake="-DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake" \
-          V8_FROM_SOURCE=1 \
-          TARGET=aarch64-linux-android26 \
-          HOST=x86_64-unknown-linux-gnu \
-          API_LEVEL=26 \
-          CARGO_BUILD_TARGET=aarch64-linux-android26 \
-          RUSTY_V8_SRC_BINDING_URL="" \
+          export CC=aarch64-linux-android26-clang
+          export CXX=aarch64-linux-android26-clang++
+          export TARGET=aarch64-linux-android
+          export HOST=x86_64-unknown-linux-gnu
+          export API_LEVEL=26
+          export ANDROID_PLATFORM=android-26
+          export V8_FROM_SOURCE=1
+          # V8 build host tools are glibc (x86_64 host); target sysroot via NDK.
+          export EXTRA_GN_ARGS='target_os="android" v8_target_cpu="arm64" target_cpu="arm64"'
           cargo build --release \
-            --target aarch64-linux-android26 \
-            --package moli \
-            --features v8_enable_sandbox
+            --target aarch64-linux-android \
+            --package moli
 
-      - name: Check binary
+      - name: Inspect binary
         run: |
           set -euo pipefail
-          bin=target/aarch64-linux-android26/release/moli
+          bin=target/aarch64-linux-android/release/moli
           file "$bin"
-          ldd "$bin" || true
+          ls -lh "$bin"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: moli-aarch64-linux-android
-          path: target/aarch64-linux-android26/release/moli
-          if-no-files-found: error
-          retention-days: 30
-
-  build-musl:
-    name: musl aarch64 (Termux fallback)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    steps:
-      - name: Checkout fork
-        uses: actions/checkout@v4
-        with:
-          repository: lexmount/moli
-          ref: main
-          submodules: recursive
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Install Rust pinned toolchain
-        run: |
-          set -euo pipefail
-          toolchain="$(tr -d '[:space:]' < rust-toolchain)"
-          rustup toolchain install "$toolchain" --profile minimal --no-self-update
-          rustup default "$toolchain"
-          rustc --version
-          rustup target add aarch64-unknown-linux-musl
-
-      - name: Install musl cross toolchain
-        run: |
-          set -euo pipefail
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            gcc-aarch64-linux-musl g++-aarch64-linux-musl cmake ninja-build \
-            musl-tools
-
-      - name: Build moli
-        run: |
-          set -euo pipefail
-          cargo build --release \
-            --target aarch64-unknown-linux-musl \
-            --package moli \
-            --features v8_enable_sandbox
-
-      - name: Check binary
-        run: |
-          set -euo pipefail
-          bin=target/aarch64-unknown-linux-musl/release/moli
-          file "$bin"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: moli-aarch64-linux-musl
-          path: target/aarch64-unknown-linux-musl/release/moli
+          path: target/aarch64-linux-android/release/moli
           if-no-files-found: error
           retention-days: 30
