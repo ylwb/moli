@@ -49,14 +49,16 @@ jobs:
           if [ -z "$ndk_dir" ]; then
             echo "NDK dir not found; tree:"; ls -la; exit 1
           fi
-          echo "ANDROID_NDK_HOME=${ndk_dir#./}" >> "$GITHUB_ENV"
-          echo "${ndk_dir#./}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
-          # NDK r26c ships API 21/23/26/28/29/30/31/33/34; use 21 for wide compatibility
-          aarch64-linux-android21-clang --version
+          ndk_dir="${ndk_dir#./}"
+          echo "ANDROID_NDK_HOME=$ndk_dir" >> "$GITHUB_ENV"
+          echo "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+          # verify toolchain is reachable
+          "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" --version
 
       - name: Build moli (V8 from source, cross android)
         run: |
           set -euo pipefail
+          # GITHUB_PATH from previous step is already on PATH here
           export CC=aarch64-linux-android21-clang
           export CXX=aarch64-linux-android21-clang++
           export TARGET=aarch64-linux-android
@@ -65,6 +67,8 @@ jobs:
           export ANDROID_PLATFORM=android-26
           export V8_FROM_SOURCE=1
           export EXTRA_GN_ARGS='target_os="android" v8_target_cpu="arm64" target_cpu="arm64"'
+          # sanity: verify clang is actually reachable
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" --version
           cargo build --release \
             --target aarch64-linux-android \
             --package moli
