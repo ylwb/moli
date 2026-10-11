@@ -14,10 +14,12 @@ env:
 
 jobs:
   # -----------------------------------------------------------------
-  # Option A: musl static build (Termux-friendly, prebuilt V8)
+  # musl static build: uses prebuilt librusty_v8_release_aarch64-unknown-linux-musl.a.gz
+  # (no V8 source build needed — moli-renderer-v8 does NOT enable
+  #  v8_enable_pointer_compression for the musl target)
   # -----------------------------------------------------------------
   build-musl:
-    name: aarch64-unknown-linux-musl
+    name: aarch64-unknown-linux-musl (prebuilt V8)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -39,28 +41,26 @@ jobs:
           rustc --version
           rustup target add aarch64-unknown-linux-musl
 
-      - name: Install musl cross linker (musl-tools)
+      - name: Install musl cross linker
         run: |
           set -euo pipefail
-          # ubuntu-24.04 has musl-tools (provides aarch64-linux-musl-gcc)
-          apt-get update
-          apt-get install -y --no-install-recommends musl-tools
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+          aarch64-linux-musl-gcc --version
 
       - name: Build moli (musl, prebuilt V8)
         run: |
           set -euo pipefail
-          # Static musl: need aarch64-linux-musl-gcc as linker driver
+          # Link statically against musl: use aarch64-linux-musl-gcc as rustc's linker driver.
+          # V8: download prebuilt aarch64-unknown-linux-musl archive (no V8_FROM_SOURCE needed).
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc
           export CC=aarch64-linux-musl-gcc
           export CXX=aarch64-linux-musl-g++
-          # Tell cc crate to use musl sysroot
-          # RUSTY_V8_PREBUILT: use the musl archive (no V8_FROM_SOURCE needed)
-          # moli uses v8_enable_pointer_compression, so the file is
-          # librusty_v8_ptrcomp_release_aarch64-unknown-linux-musl.a.gz
+          # aws-lc-rs / openssl / curl all need C cross compilation; keep default features on.
+          # --no-default-features would drop jemalloc, fine for musl.
           cargo build --release \
             --target aarch64-unknown-linux-musl \
-            --package moli \
-            --no-default-features
+            --package moli
 
       - name: Inspect binary
         run: |
@@ -74,70 +74,5 @@ jobs:
         with:
           name: moli-aarch64-linux-musl
           path: target/aarch64-unknown-linux-musl/release/moli
-          if-no-files-found: error
-          retention-days: 30
-
-  # -----------------------------------------------------------------
-  # Option B: Android NDK cross build (V8 from source, slow)
-  # Only run if musl version doesn't work in Termux.
-  # -----------------------------------------------------------------
-  build-android:
-    name: NDK aarch64-linux-android
-    runs-on: ubuntu-24.04
-    timeout-minutes: 300
-    needs: build-musl  # only run if musl job ran
-    steps:
-      - name: Checkout moli source
-        uses: actions/checkout@v4
-        with:
-          repository: lexmount/moli
-          ref: main
-          submodules: recursive
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Install Rust + android target
-        run: |
-          set -euo pipefail
-          toolchain="$(tr -d '[:space:]' < rust-toolchain)"
-          rustup toolchain install "$toolchain" --profile minimal --no-self-update
-          rustup default "$toolchain"
-          rustup target add aarch64-linux-android
-
-      - name: Download NDK + depot_tools
-        run: |
-          set -uo pipefail
-          apt-get update
-          apt-get install -y --no-install-recommends unzip python3-pip
-          curl -fsSL -o ndk.zip https://dl.google.com/android/repository/android-ndk-r26c-linux.zip
-          unzip -q -o ndk.zip
-          ndk_dir="$(find . -maxdepth 1 -type d -name 'android-ndk-r26c' | head -n1)"
-          echo "ANDROID_NDK_HOME=${ndk_dir#./}" >> "$GITHUB_ENV"
-          echo "${ndk_dir#./}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
-          # gclient for V8 source build
-          pip3 install --user gclient || pip3 install gclient
-
-      - name: Build moli (android NDK, V8 from source)
-        run: |
-          set -euo pipefail
-          export NDK_CROSS_PREFIX="aarch64-linux-android21"
-          export CC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$NDK_CROSS_PREFIX-clang"
-          export CXX="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/$NDK_CROSS_PREFIX-clang++"
-          export TARGET=aarch64-linux-android
-          export HOST=x86_64-unknown-linux-gnu
-          export API_LEVEL=26
-          export ANDROID_PLATFORM=android-26
-          export V8_FROM_SOURCE=1
-          export EXTRA_GN_ARGS='target_os="android" v8_target_cpu="arm64" target_cpu="arm64" android_api_level=26'
-          cargo build --release \
-            --target aarch64-linux-android \
-            --package moli \
-            --no-default-features
-
-      - name: Upload android artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: moli-aarch64-linux-android
-          path: target/aarch64-linux-android/release/moli
           if-no-files-found: error
           retention-days: 30
