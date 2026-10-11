@@ -124,6 +124,33 @@ jobs:
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/zig
           # zig provides musl libc internally; -nostdlib avoids looking for crt1.o from NDK sysroot
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER_ARGS="-target aarch64-linux-musl --release -nostdlib -lc"
+          # Patch NDK bionic headers: glibc-style code (curl/nghttp2/ring/openssl) defines
+          # uint32_t in types.h, then includes linux/types.h which redefines it → -Werror. Fix by
+          # neutralizing NDK bionic <linux/types.h> / <asm/types.h> so bionic's own uint32_t wins.
+          echo "=== neutralizing NDK bionic linux/types.h ==="
+          if [ -f "$NDK_SYSROOT/usr/include/linux/types.h" ]; then
+            printf '/* Neutralized by termux-aarch64 build: skip bionic kernel UAPI */\n' > "$NDK_SYSROOT/usr/include/linux/types.h"
+            echo "neutralized $NDK_SYSROOT/usr/include/linux/types.h"
+          fi
+          # Also check arpa/inet.h in_addr_t issue: NDK sysroot's arpa/inet.h needs <netinet/in.h>
+          echo "=== fixing arpa/inet.h in_addr_t ==="
+          if [ -f "$NDK_SYSROOT/usr/include/arpa/inet.h" ]; then
+            # bionic arpa/inet.h expects netinet/in.h to have been included first (or it includes it itself);
+            # when a header pulls in <arpa/inet.h> directly without netinet, in_addr_t is undefined.
+            # Prepend a fallback include of netinet/in.h at the top.
+            first_line=$(head -n 1 "$NDK_SYSROOT/usr/include/arpa/inet.h")
+            case "$first_line" in
+              "#include"*) ;;  # already includes something; prepend our include before it
+              *) ;;
+            esac
+            {
+              echo "/* Termux build patch: ensure in_addr_t is defined */"
+              echo "#include <netinet/in.h>"
+              cat "$NDK_SYSROOT/usr/include/arpa/inet.h"
+            } > "$NDK_SYSROOT/usr/include/arpa/inet.h.patched"
+            mv "$NDK_SYSROOT/usr/include/arpa/inet.h.patched" "$NDK_SYSROOT/usr/include/arpa/inet.h"
+            echo "patched arpa/inet.h to include netinet/in.h first"
+          fi
           cargo build --release \
             --target aarch64-unknown-linux-musl \
             --package moli
