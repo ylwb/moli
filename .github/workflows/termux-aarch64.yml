@@ -16,7 +16,7 @@ jobs:
   build-android:
     name: NDK aarch64-linux-android
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
     steps:
       - name: Checkout moli source
         uses: actions/checkout@v4
@@ -50,25 +50,40 @@ jobs:
             echo "NDK dir not found; tree:"; ls -la; exit 1
           fi
           ndk_dir="${ndk_dir#./}"
+          ndk_bin="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          sysroot="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
           echo "ANDROID_NDK_HOME=$ndk_dir" >> "$GITHUB_ENV"
-          echo "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
-          # verify toolchain is reachable
-          "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" --version
+          echo "$ndk_bin" >> "$GITHUB_PATH"
+          echo "NDK_BIN=$ndk_bin" >> "$GITHUB_ENV"
+          echo "NDK_SYSROOT=$sysroot" >> "$GITHUB_ENV"
+          "$ndk_bin/aarch64-linux-android21-clang" --version
+          ls "$sysroot/usr/include" | head
 
       - name: Build moli (V8 from source, cross android)
         run: |
           set -euo pipefail
-          # GITHUB_PATH from previous step is already on PATH here
-          export CC=aarch64-linux-android21-clang
-          export CXX=aarch64-linux-android21-clang++
+          export NDK_CROSS_PREFIX="aarch64-linux-android21"
+          # C compiler for cc crate (build scripts of C dependencies like aws-lc-rs)
+          export CC="$NDK_BIN/$NDK_CROSS_PREFIX-clang"
+          export CXX="$NDK_BIN/$NDK_CROSS_PREFIX-clang++"
+          export AR="$NDK_BIN/ar"
           export TARGET=aarch64-linux-android
           export HOST=x86_64-unknown-linux-gnu
           export API_LEVEL=26
           export ANDROID_PLATFORM=android-26
           export V8_FROM_SOURCE=1
-          export EXTRA_GN_ARGS='target_os="android" v8_target_cpu="arm64" target_cpu="arm64"'
-          # sanity: verify clang is actually reachable
-          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" --version
+          # rust_v8 build.rs GN args for Android cross build
+          export EXTRA_GN_ARGS='target_os="android" v8_target_cpu="arm64" target_cpu="arm64" android_api_level=26'
+          # bindgen (used by aws-lc-sys / rustls / curl-sys / openssl-sys) needs NDK sysroot
+          export BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-linux-android21 --sysroot=$NDK_SYSROOT -I$NDK_SYSROOT/usr/include"
+          # V8 host toolchain: gn/ninja need Python, ubuntu-24.04 has it
+          python3 --version
+          ninja --version || (apt-get update && apt-get install -y --no-install-recommends ninja-build)
+          gclient --version || (
+            apt-get update && apt-get install -y --no-install-recommends python3-pip
+            pip3 install --break-system-packages depot_tools
+          )
+          "$NDK_BIN/$NDK_CROSS_PREFIX-clang" --version
           cargo build --release \
             --target aarch64-linux-android \
             --package moli
