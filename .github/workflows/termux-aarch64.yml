@@ -39,7 +39,6 @@ jobs:
       - name: Download Android NDK r26c
         run: |
           set -uo pipefail
-          # unzip may be missing; install it just in case
           if ! command -v unzip >/dev/null; then
             apt-get update
             apt-get install -y --no-install-recommends unzip
@@ -48,22 +47,18 @@ jobs:
           unzip -q -o ndk.zip
           ndk_dir="$(find . -maxdepth 1 -type d -name 'android-ndk-r26c' | head -n1)"
           if [ -z "$ndk_dir" ]; then
-            echo "NDK dir not found after unzip; tree:"
-            ls -la
-            find . -maxdepth 2 -type d | head -40
-            exit 1
+            echo "NDK dir not found; tree:"; ls -la; exit 1
           fi
           echo "ANDROID_NDK_HOME=${ndk_dir#./}" >> "$GITHUB_ENV"
           echo "${ndk_dir#./}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
-          ls "${ndk_dir#./}/toolchains/llvm/prebuilt/linux-x86_64/bin" | head -20
-          command -v aarch64-linux-android26-clang || \
-            aarch64-linux-android26-clang --version
+          # NDK r26c ships API 21/23/26/28/29/30/31/33/34; use 21 for wide compatibility
+          aarch64-linux-android21-clang --version
 
       - name: Build moli (V8 from source, cross android)
         run: |
           set -euo pipefail
-          export CC=aarch64-linux-android26-clang
-          export CXX=aarch64-linux-android26-clang++
+          export CC=aarch64-linux-android21-clang
+          export CXX=aarch64-linux-android21-clang++
           export TARGET=aarch64-linux-android
           export HOST=x86_64-unknown-linux-gnu
           export API_LEVEL=26
