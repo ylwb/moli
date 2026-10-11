@@ -99,10 +99,15 @@ jobs:
           # Suppress kernel UAPI #warning (triggered when -Werror is used)
           sed -i '/^#warning/d' /tmp/linux-6.6/include/uapi/linux/types.h 2>/dev/null || true
           echo "=== testing linux/types.h compile ==="
-          printf '#!/bin/bash\nCLANG_DIR=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin\nSYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot\n# Filter --target args\nargs=()\nprev=0\nfor a in "$@"; do\n  if [ "$prev" = "1" ]; then prev=0; continue; fi\n  case "$a" in --target=*|-target=*) : ;; --target|-target) prev=1 ;; *) args+=("$a") ;; esac\ndone\n# Detect compile-only mode (-c, -E, or -S present)\ncp=0\nfor a in "${args[@]}"; do case "$a" in -c|-E|-S) cp=1 ;; esac; done\nif [ "$cp" = "1" ]; then\n  exec "$CLANG_DIR/aarch64-linux-android21-clang" --target=aarch64-linux-gnu --sysroot="$SYSROOT" -I /tmp/linux-6.6/include/uapi "${args[@]}"\nelse\n  # Full link: use zig cc (bundles musl, can link .o files)\n  exec /usr/local/bin/zig cc -target aarch64-linux-musl -O3 "${args[@]}"\nfi\n' > cc-ndk
+          printf '#!/bin/bash\nCLANG_DIR=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin\nSYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot\n# Filter --target args\nargs=()\nprev=0\nfor a in "$@"; do\n  if [ "$prev" = "1" ]; then prev=0; continue; fi\n  case "$a" in --target=*|-target=*) : ;; --target|-target) prev=1 ;; *) args+=("$a") ;; esac\ndone\n# Detect compile-only mode (-c, -E, or -S present)\ncp=0\nfor a in "${args[@]}"; do case "$a" in -c|-E|-S) cp=1 ;; esac; done\nif [ "$cp" = "1" ]; then\n  exec "$CLANG_DIR/aarch64-linux-android21-clang" --target=aarch64-linux-gnu --sysroot="$SYSROOT" -I /tmp/linux-6.6/include/uapi -include /opt/ndk-guard.h "${args[@]}"\nelse\n  # Full link: use zig cc (bundles musl, can link .o files)\n  exec /usr/local/bin/zig cc -target aarch64-linux-musl -O3 "${args[@]}"\nfi\n' > cc-ndk
           chmod +x cc-ndk
           printf '#!/bin/bash\nCLANG_DIR=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin\nSYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot\nargs=()\nprev_was_target=0\nfor a in "$@"; do\n  if [ "$prev_was_target" = "1" ]; then prev_was_target=0; continue; fi\n  case "$a" in\n    --target=*|-target=*) : ;;\n    --target|-target) prev_was_target=1 ;;\n    *) args+=("$a") ;;\n  esac\ndone\nexec "$CLANG_DIR/aarch64-linux-android21-clang++" --target=aarch64-linux-gnu --sysroot="$SYSROOT" -I /tmp/linux-6.6/include/uapi "${args[@]}"\n' > cxx-ndk
           chmod +x cxx-ndk
+
+          # Create ndk-guard.h with printf (avoids heredoc YAML issues)
+          printf '/* NDK guard: pre-include stdint.h to reduce redefinition clashes */\n' > /opt/ndk-guard.h
+          printf '#include <stdint.h>\n' >> /opt/ndk-guard.h
+          chmod 644 /opt/ndk-guard.h
 
           # Self-test: compile a trivial C file
           printf 'int main(){return 0;}' > /tmp/t.c
@@ -124,14 +129,7 @@ jobs:
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/zig
           # zig provides musl libc internally; -nostdlib avoids looking for crt1.o from NDK sysroot
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER_ARGS="-target aarch64-linux-musl --release -nostdlib -lc"
-          # Patch NDK bionic headers: glibc-style code (curl/nghttp2/ring/openssl) defines
-          # uint32_t in types.h, then includes linux/types.h which redefines it → -Werror. Fix by
-          # neutralizing NDK bionic <linux/types.h> / <asm/types.h> so bionic's own uint32_t wins.
-          echo "=== neutralizing NDK bionic linux/types.h ==="
-          if [ -f "$NDK_SYSROOT/usr/include/linux/types.h" ]; then
-            printf '/* Neutralized by termux-aarch64 build: skip bionic kernel UAPI */\n' > "$NDK_SYSROOT/usr/include/linux/types.h"
-            echo "neutralized $NDK_SYSROOT/usr/include/linux/types.h"
-          fi
+
           # Also check arpa/inet.h in_addr_t issue: NDK sysroot's arpa/inet.h needs <netinet/in.h>
           echo "=== fixing arpa/inet.h in_addr_t ==="
           if [ -f "$NDK_SYSROOT/usr/include/arpa/inet.h" ]; then
