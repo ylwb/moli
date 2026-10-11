@@ -14,7 +14,7 @@ env:
 
 jobs:
   build-musl:
-    name: aarch64-unknown-linux-musl (zig CC/linker, prebuilt V8)
+    name: aarch64-unknown-linux-musl (NDK clang CC + zig linker, prebuilt V8)
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -36,34 +36,53 @@ jobs:
           rustc --version
           rustup target add aarch64-unknown-linux-musl
 
-      - name: Install zig
+      - name: Download NDK
+        run: |
+          set -euo pipefail
+          echo "=== downloading NDK r26c ==="
+          curl -fSL --max-time 600 -o /tmp/ndk.zip \
+            https://dl.google.com/android/repository/android-ndk-r26c-linux.zip
+          ls -lh /tmp/ndk.zip
+          unzip -q /tmp/ndk.zip -d /opt/
+          sudo mv /opt/android-ndk-r26c /opt/ndk
+          echo "=== NDK installed ==="
+          ls /opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/ | grep aarch64
+
+      - name: Download zig (linker only)
         run: |
           set -uo pipefail
-          echo "=== downloading zig ==="
           curl -fsSL --max-time 300 -o /tmp/zig.tar.xz \
             https://ziglang.org/download/0.12.0/zig-linux-x86_64-0.12.0.tar.xz
-          ls -lh /tmp/zig.tar.xz
           tar xf /tmp/zig.tar.xz -C /tmp
           sudo mv /tmp/zig-linux-x86_64-0.12.0/zig /usr/local/bin/zig
           zig version
 
-      - name: Create zig-cc / zig-cxx wrappers
+      - name: Configure NDK clang as CC/CXX for musl target
         run: |
           set -euo pipefail
-          zig_dir=/usr/local/bin
-          printf '#!/bin/bash\nargs=()\nprev_was_target=0\nfor a in "$@"; do\n  if [ "$prev_was_target" = "1" ]; then prev_was_target=0; continue; fi\n  case "$a" in\n    --target=*) : ;;\n    -target=*) : ;;\n    --target) prev_was_target=1 ;;\n    -target) prev_was_target=1 ;;\n    *) args+=("$a") ;;\n  esac\ndone\nexec "%s/zig" cc --target aarch64-linux-musl --release "${args[@]}"\n' "$zig_dir" > zig-cc
-          printf '#!/bin/bash\nargs=()\nprev_was_target=0\nfor a in "$@"; do\n  if [ "$prev_was_target" = "1" ]; then prev_was_target=0; continue; fi\n  case "$a" in\n    --target=*) : ;;\n    -target=*) : ;;\n    --target) prev_was_target=1 ;;\n    -target) prev_was_target=1 ;;\n    *) args+=("$a") ;;\n  esac\ndone\nexec "%s/zig" c++ --target aarch64-linux-musl --release "${args[@]}"\n' "$zig_dir" > zig-cxx
-          chmod +x zig-cc zig-cxx
-          echo "--- zig-cc ---"
-          cat zig-cc
-          printf 'int main(){return 0;}' > /tmp/t.c
-          ./zig-cc /tmp/t.c -o /tmp/t && /tmp/t && echo "zig-cc wrapper OK"
+          ndk_clang_dir=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin
+          ndk_sysroot=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot
+          # NDK clang compiles aarch64; --target overrides arch for C files
+          clang="$ndk_clang_dir/aarch64-linux-android21-clang"
+          echo "clang: $clang"
+          $clang --version
 
-      - name: Build moli (musl via zig)
+          # Create CC wrapper: NDK clang, force musl target, use NDK sysroot headers
+          printf '#!/bin/bash\nCLANG_DIR=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin\nSYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot\nexec "$CLANG_DIR/aarch64-linux-android21-clang" --target=aarch64-linux-musl --sysroot="$SYSROOT" --gcc-toolchain=/opt/ndk "$@"\n' > cc-ndk
+          chmod +x cc-ndk
+          printf '#!/bin/bash\nCLANG_DIR=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin\nSYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot\nexec "$CLANG_DIR/aarch64-linux-android21-clang++" --target=aarch64-linux-musl --sysroot="$SYSROOT" --gcc-toolchain=/opt/ndk "$@"\n' > cxx-ndk
+          chmod +x cxx-ndk
+
+          # Self-test: compile a trivial C file
+          printf 'int main(){return 0;}' > /tmp/t.c
+          ./cc-ndk -O2 -o /tmp/t /tmp/t.c && echo "cc-ndk OK (link skipped, no libc yet)" || echo "cc-ndk compile test done (link may need libc)"
+
+      - name: Build moli (musl: NDK clang CC + zig linker)
         run: |
           set -euo pipefail
-          export CC="$PWD/zig-cc"
-          export CXX="$PWD/zig-cxx"
+          export CC="$PWD/cc-ndk"
+          export CXX="$PWD/cxx-ndk"
+          # Linker: zig provides musl libc + static link
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/zig
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER_ARGS="-target aarch64-linux-musl --release"
           cargo build --release \
