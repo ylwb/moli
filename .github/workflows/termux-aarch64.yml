@@ -79,8 +79,8 @@ jobs:
             linux-6.6/arch/arm64/include/uapi/asm
           # NDK sysroot does not have a/ dir; create the include search path it uses
           # NDK clang --target=aarch64-linux-gnu searches sysroot/usr/include and sysroot/usr/include/aarch64-linux-gnu
-          sudo ln -sf /tmp/linux-6.6/arch/arm64/include/uapi/asm "$NDK_SYSROOT/usr/include/asm"
-          echo "asm linked: $(ls -la "$NDK_SYSROOT/usr/include/asm" 2>&1 | head -1)"
+          sudo ln -sf /tmp/linux-6.6/arch/arm64/include/uapi/asm "$ndk_sysroot/usr/include/asm"
+          echo "asm linked: $(ls -la "$ndk_sysroot/usr/include/asm" 2>&1 | head -1)"
           # Also add -I to kernel include dir so linux/ headers resolve correctly
           echo "=== testing linux/types.h compile ==="
           printf '#include <linux/types.h>\nint main(){return 0;}' > /tmp/linux-test.c
