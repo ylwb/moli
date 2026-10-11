@@ -93,7 +93,7 @@ jobs:
           done
           echo "asm dir now: $(ls "$ASM_DIR")"
           # Suppress kernel UAPI #warning (triggered when -Werror is used)
-          sed -i 's/#warning/#warning_DISABLED/g' /tmp/linux-6.6/include/uapi/linux/types.h 2>/dev/null || true
+          sed -i '/^#warning/d' /tmp/linux-6.6/include/uapi/linux/types.h 2>/dev/null || true
           echo "=== testing linux/types.h compile ==="
           printf '#include <linux/types.h>\nint main(){return 0;}' > /tmp/linux-test.c
           "$ndk_clang_dir/aarch64-linux-android21-clang" --target=aarch64-linux-gnu --sysroot="$ndk_sysroot" \
