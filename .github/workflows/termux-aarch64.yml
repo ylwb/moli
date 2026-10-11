@@ -16,7 +16,7 @@ jobs:
   build-musl:
     name: aarch64-unknown-linux-musl (zig CC/linker, prebuilt V8)
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 180
     steps:
       - name: Checkout moli source
         uses: actions/checkout@v4
@@ -36,41 +36,60 @@ jobs:
           rustc --version
           rustup target add aarch64-unknown-linux-musl
 
-      - name: Install zig (system-wide, sudo)
+      - name: Install zig
         run: |
           set -uo pipefail
           echo "=== downloading zig ==="
           curl -fsSL --max-time 300 -o /tmp/zig.tar.xz \
             https://ziglang.org/download/0.12.0/zig-linux-x86_64-0.12.0.tar.xz
-          echo "=== download done, size ==="
           ls -lh /tmp/zig.tar.xz
           tar xf /tmp/zig.tar.xz -C /tmp
-          echo "=== extracted ==="
-          ls /tmp/zig-linux-x86_64-0.12.0/
           sudo mv /tmp/zig-linux-x86_64-0.12.0/zig /usr/local/bin/zig
-          echo "=== verify ==="
           zig version
-          echo "ZIG_OK"
+
+      - name: Create zig-cc / zig-cxx wrappers (filter --target args)
+        run: |
+          set -euo pipefail
+          cat > zig-cc <<'WRAPPER'
+#!/bin/bash
+# zig cc gcc-compatible wrapper: strip --target/-target args zig already handles
+args=()
+skip_next=0
+for a in "$@"; do
+  if [ "$skip_next" = "1" ]; then skip_next=0; continue; fi
+  case "$a" in
+    --target=*|-target=*|--target|-target) skip_next=1; [ "${a#*=}" != "${a}" ] && skip_next=0 ;;
+    *) args+=("$a") ;;
+  esac
+done
+exec /usr/local/bin/zig cc --target aarch64-linux-musl --release "${args[@]}"
+WRAPPER
+          cat > zig-cxx <<'WRAPPER'
+#!/bin/bash
+args=()
+skip_next=0
+for a in "$@"; do
+  if [ "$skip_next" = "1" ]; then skip_next=0; continue; fi
+  case "$a" in
+    --target=*|-target=*|--target|-target) skip_next=1; [ "${a#*=}" != "${a}" ] && skip_next=0 ;;
+    *) args+=("$a") ;;
+  esac
+done
+exec /usr/local/bin/zig c++ --target aarch64-linux-musl --release "${args[@]}"
+WRAPPER
+          chmod +x zig-cc zig-cxx
+          # quick sanity: compile + link a trivial C file
+          printf 'int main(){return 0;}' > /tmp/t.c
+          ./zig-cc /tmp/t.c -o /tmp/t && /tmp/t && echo "zig-cc wrapper OK"
 
       - name: Build moli (musl via zig)
         run: |
           set -euo pipefail
-          # CC/CXX: gcc-compatible front-end via zig
-          echo "CC test:"
-          echo 'int main(){return 0;}' | zig cc --target aarch64-linux-musl --release -x c - -o /tmp/test && /tmp/test && echo "zig cc works"
-          echo "CXX test:"
-          echo 'int main(){return 0;}' | zig c++ --target aarch64-linux-musl --release -x c - -o /tmp/testcxx && echo "zig c++ works"
-
-          zig_dir="/usr/local/bin"
-          printf '#!/bin/bash\nexec "%s/zig" cc --target aarch64-linux-musl --release "$@"\n' "$zig_dir" > zig-cc
-          printf '#!/bin/bash\nexec "%s/zig" c++ --target aarch64-linux-musl --release "$@"\n' "$zig_dir" > zig-cxx
-          chmod +x zig-cc zig-cxx
-
           export CC="$PWD/zig-cc"
           export CXX="$PWD/zig-cxx"
-          # rustc linker: zig acts as a GNU ld-compatible driver
+          # rustc final link step: use zig directly as a GCC-like linker driver
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/zig
-          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER_ARGS="-target aarch64-linux-musl --release"
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER_ARGS="-target aarch64-linux-musl --release -Wl,-z,noexecstack"
           cargo build --release \
             --target aarch64-unknown-linux-musl \
             --package moli
