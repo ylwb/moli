@@ -14,7 +14,7 @@ env:
 
 jobs:
   build-musl:
-    name: aarch64-unknown-linux-musl (NDK clang CC + zig linker, prebuilt V8)
+    name: aarch64-unknown-linux-musl prebuilt V8 NDK CC zig linker
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -77,7 +77,7 @@ jobs:
           printf 'int main(){return 0;}' > /tmp/t.c
           ./cc-ndk -O2 -o /tmp/t /tmp/t.c && echo "cc-ndk OK (link skipped, no libc yet)" || echo "cc-ndk compile test done (link may need libc)"
 
-      - name: Build moli (musl: NDK clang CC + zig linker)
+      - name: Build moli (musl, NDK clang CC + zig linker)
         run: |
           set -euo pipefail
           export CC="$PWD/cc-ndk"
