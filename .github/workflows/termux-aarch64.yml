@@ -36,25 +36,40 @@ jobs:
           rustc --version
           rustup target add aarch64-unknown-linux-musl
 
-      - name: Install zig
+      - name: Install zig (system-wide, sudo)
         run: |
-          set -euo pipefail
-          curl -fsSL -o zig.tar.xz \
+          set -uo pipefail
+          echo "=== downloading zig ==="
+          curl -fsSL --max-time 300 -o /tmp/zig.tar.xz \
             https://ziglang.org/builds/zig-linux-x86_64-0.12.0.tar.xz
-          tar xf zig.tar.xz
-          mv zig-linux-x86_64-0.12.0 zig
-          zig/zig version
-          zig_dir="$PWD/zig"
-          printf '#!/bin/bash\nexec "%s/zig" cc --target aarch64-linux-musl --release "$@"\n' "$zig_dir" > zig-cc
-          printf '#!/bin/bash\nexec "%s/zig" c++ --target aarch64-linux-musl --release "$@"\n' "$zig_dir" > zig-cxx
-          chmod +x zig-cc zig-cxx
+          echo "=== download done, size ==="
+          ls -lh /tmp/zig.tar.xz
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "=== extracted ==="
+          ls /tmp/zig-linux-x86_64-0.12.0/
+          sudo mv /tmp/zig-linux-x86_64-0.12.0/zig /usr/local/bin/zig
+          echo "=== verify ==="
+          zig version
+          echo "ZIG_OK"
 
       - name: Build moli (musl via zig)
         run: |
           set -euo pipefail
+          # CC/CXX: gcc-compatible front-end via zig
+          echo "CC test:"
+          echo 'int main(){return 0;}' | zig cc --target aarch64-linux-musl --release -x c - -o /tmp/test && /tmp/test && echo "zig cc works"
+          echo "CXX test:"
+          echo 'int main(){return 0;}' | zig c++ --target aarch64-linux-musl --release -x c - -o /tmp/testcxx && echo "zig c++ works"
+
+          zig_dir="/usr/local/bin"
+          printf '#!/bin/bash\nexec "%s/zig" cc --target aarch64-linux-musl --release "$@"\n' "$zig_dir" > zig-cc
+          printf '#!/bin/bash\nexec "%s/zig" c++ --target aarch64-linux-musl --release "$@"\n' "$zig_dir" > zig-cxx
+          chmod +x zig-cc zig-cxx
+
           export CC="$PWD/zig-cc"
           export CXX="$PWD/zig-cxx"
-          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$PWD/zig/zig"
+          # rustc linker: zig acts as a GNU ld-compatible driver
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/zig
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER_ARGS="-target aarch64-linux-musl --release"
           cargo build --release \
             --target aarch64-unknown-linux-musl \
