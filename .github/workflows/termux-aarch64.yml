@@ -117,6 +117,10 @@ jobs:
           NDK_SYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot
           # bindgen calls clang directly (not via CC); tell it to use NDK aarch64 sysroot
           export BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_musl="--target=aarch64-linux-gnu --sysroot=$NDK_SYSROOT --gcc-toolchain=/opt/ndk"
+          # CMake compiler-test (full link) fails: NDK sysroot has no musl crt1.o etc.
+          # Skip the test; we already verified -c compilation works.
+          export CMAKE_C_COMPILER_WORKS=1
+          export CMAKE_CXX_COMPILER_WORKS=1
           # Linker: zig provides musl libc + static link
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/zig
           # zig provides musl libc internally; -nostdlib avoids looking for crt1.o from NDK sysroot
