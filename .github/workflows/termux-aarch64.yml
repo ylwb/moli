@@ -68,14 +68,14 @@ jobs:
           $clang --version
 
           # Create CC wrapper: NDK clang, force musl target, use NDK sysroot headers
-          printf '#!/bin/bash\nCLANG_DIR=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin\nSYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot\nexec "$CLANG_DIR/aarch64-linux-android21-clang" --target=aarch64-linux-musl --sysroot="$SYSROOT" --gcc-toolchain=/opt/ndk "$@"\n' > cc-ndk
+          printf '#!/bin/bash\nCLANG_DIR=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin\nSYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot\nexec "$CLANG_DIR/aarch64-linux-android21-clang" --target=aarch64-linux-gnu --sysroot="$SYSROOT" "$@"\n' > cc-ndk
           chmod +x cc-ndk
-          printf '#!/bin/bash\nCLANG_DIR=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin\nSYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot\nexec "$CLANG_DIR/aarch64-linux-android21-clang++" --target=aarch64-linux-musl --sysroot="$SYSROOT" --gcc-toolchain=/opt/ndk "$@"\n' > cxx-ndk
+          printf '#!/bin/bash\nCLANG_DIR=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin\nSYSROOT=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot\nexec "$CLANG_DIR/aarch64-linux-android21-clang++" --target=aarch64-linux-gnu --sysroot="$SYSROOT" "$@"\n' > cxx-ndk
           chmod +x cxx-ndk
 
           # Self-test: compile a trivial C file
           printf 'int main(){return 0;}' > /tmp/t.c
-          ./cc-ndk -O2 -o /tmp/t /tmp/t.c && echo "cc-ndk OK (link skipped, no libc yet)" || echo "cc-ndk compile test done (link may need libc)"
+          ./cc-ndk -c -O2 -o /tmp/t.o /tmp/t.c && echo "cc-ndk compile-only OK"
 
       - name: Build moli (musl, NDK clang CC + zig linker)
         run: |
