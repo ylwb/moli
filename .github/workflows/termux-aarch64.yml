@@ -51,8 +51,8 @@ jobs:
         run: |
           set -euo pipefail
           zig_dir=/usr/local/bin
-          printf '#!/bin/bash\nargs=(); skip_next=0\nfor a in "$@"; do\n  if [ "$skip_next" = "1" ]; then skip_next=0; continue; fi\n  case "$a" in\n    --target=*|-target=*) skip_next=0 ;;\n    --target|-target) skip_next=1 ;;\n    *) args+=("$a") ;;\n  esac\ndone\nexec "%s/zig" cc --target aarch64-linux-musl --release "${args[@]}"\n' "$zig_dir" > zig-cc
-          printf '#!/bin/bash\nargs=(); skip_next=0\nfor a in "$@"; do\n  if [ "$skip_next" = "1" ]; then skip_next=0; continue; fi\n  case "$a" in\n    --target=*|-target=*) skip_next=0 ;;\n    --target|-target) skip_next=1 ;;\n    *) args+=("$a") ;;\n  esac\ndone\nexec "%s/zig" c++ --target aarch64-linux-musl --release "${args[@]}"\n' "$zig_dir" > zig-cxx
+          printf '#!/bin/bash\nargs=()\nprev_was_target=0\nfor a in "$@"; do\n  if [ "$prev_was_target" = "1" ]; then prev_was_target=0; continue; fi\n  case "$a" in\n    --target=*) : ;;\n    -target=*) : ;;\n    --target) prev_was_target=1 ;;\n    -target) prev_was_target=1 ;;\n    *) args+=("$a") ;;\n  esac\ndone\nexec "%s/zig" cc --target aarch64-linux-musl --release "${args[@]}"\n' "$zig_dir" > zig-cc
+          printf '#!/bin/bash\nargs=()\nprev_was_target=0\nfor a in "$@"; do\n  if [ "$prev_was_target" = "1" ]; then prev_was_target=0; continue; fi\n  case "$a" in\n    --target=*) : ;;\n    -target=*) : ;;\n    --target) prev_was_target=1 ;;\n    -target) prev_was_target=1 ;;\n    *) args+=("$a") ;;\n  esac\ndone\nexec "%s/zig" c++ --target aarch64-linux-musl --release "${args[@]}"\n' "$zig_dir" > zig-cxx
           chmod +x zig-cc zig-cxx
           echo "--- zig-cc ---"
           cat zig-cc
