@@ -41,7 +41,7 @@ jobs:
           set -uo pipefail
           echo "=== downloading zig ==="
           curl -fsSL --max-time 300 -o /tmp/zig.tar.xz \
-            https://ziglang.org/builds/zig-linux-x86_64-0.12.0.tar.xz
+            https://ziglang.org/download/0.12.0/zig-linux-x86_64-0.12.0.tar.xz
           echo "=== download done, size ==="
           ls -lh /tmp/zig.tar.xz
           tar xf /tmp/zig.tar.xz -C /tmp
