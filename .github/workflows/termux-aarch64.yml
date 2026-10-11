@@ -55,8 +55,12 @@ jobs:
           curl -fsSL --max-time 300 -o /tmp/zig.tar.xz \
             https://ziglang.org/download/0.12.0/zig-linux-x86_64-0.12.0.tar.xz
           tar xf /tmp/zig.tar.xz -C /tmp
-          sudo mv /tmp/zig-linux-x86_64-0.12.0/zig /usr/local/bin/zig
+          sudo mv /tmp/zig-linux-x86_64-0.12.0 /opt/zig
+          sudo ln -sf /opt/zig/zig /usr/local/bin/zig
           zig version
+          # Verify zig can find its lib dir (needed for zig cc linking)
+          zig cc --version 2>&1 | head -1
+          ls /opt/zig/lib 2>/dev/null | head -5 || echo "no lib dir (expected in 0.12)"
 
       - name: Configure NDK clang as CC/CXX for musl target
         run: |
