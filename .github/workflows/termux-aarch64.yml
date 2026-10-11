@@ -44,16 +44,9 @@ jobs:
           tar xf zig.tar.xz
           mv zig-linux-x86_64-0.12.0 zig
           zig/zig version
-          # Create self-contained CC/CXX wrapper scripts (no runtime env var needed)
           zig_dir="$PWD/zig"
-          cat > zig-cc <<EOF
-#!/bin/bash
-exec "$zig_dir/zig" cc --target aarch64-linux-musl --release "\$@"
-EOF
-          cat > zig-cxx <<EOF
-#!/bin/bash
-exec "$zig_dir/zig" c++ --target aarch64-linux-musl --release "\$@"
-EOF
+          printf '#!/bin/bash\nexec "%s/zig" cc --target aarch64-linux-musl --release "$@"\n' "$zig_dir" > zig-cc
+          printf '#!/bin/bash\nexec "%s/zig" c++ --target aarch64-linux-musl --release "$@"\n' "$zig_dir" > zig-cxx
           chmod +x zig-cc zig-cxx
 
       - name: Build moli (musl via zig)
@@ -61,11 +54,8 @@ EOF
           set -euo pipefail
           export CC="$PWD/zig-cc"
           export CXX="$PWD/zig-cxx"
-          # rustc linker: zig can act as a full GNU ld wrapper via 'zig cc'
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$PWD/zig/zig"
-          # zig's GCC-compatible link command: zig <linker> --target ... gcc-driver args
-          # Simpler: use 'zig cc' as linker too (it forwards all args)
-          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER_ARGS="-target aarch64-linux-musl --release -Wl,-z,noexecstack -Wl,--build-id=none"
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER_ARGS="-target aarch64-linux-musl --release"
           cargo build --release \
             --target aarch64-unknown-linux-musl \
             --package moli
