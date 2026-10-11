@@ -92,6 +92,8 @@ jobs:
             fi
           done
           echo "asm dir now: $(ls "$ASM_DIR")"
+          # Suppress kernel UAPI #warning (triggered when -Werror is used)
+          sed -i 's/#warning/#warning_DISABLED/g' /tmp/linux-6.6/include/uapi/linux/types.h 2>/dev/null || true
           echo "=== testing linux/types.h compile ==="
           printf '#include <linux/types.h>\nint main(){return 0;}' > /tmp/linux-test.c
           "$ndk_clang_dir/aarch64-linux-android21-clang" --target=aarch64-linux-gnu --sysroot="$ndk_sysroot" \
@@ -117,7 +119,8 @@ jobs:
           export BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_musl="--target=aarch64-linux-gnu --sysroot=$NDK_SYSROOT --gcc-toolchain=/opt/ndk"
           # Linker: zig provides musl libc + static link
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/usr/local/bin/zig
-          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER_ARGS="-target aarch64-linux-musl --release"
+          # zig provides musl libc internally; -nostdlib avoids looking for crt1.o from NDK sysroot
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER_ARGS="-target aarch64-linux-musl --release -nostdlib -lc"
           cargo build --release \
             --target aarch64-unknown-linux-musl \
             --package moli
