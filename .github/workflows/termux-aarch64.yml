@@ -82,10 +82,16 @@ jobs:
           # Link aarch64 asm/ and asm-generic/ into NDK sysroot so <asm/...> resolves
           sudo ln -sf /tmp/linux-6.6/arch/arm64/include/uapi/asm "$ndk_sysroot/usr/include/asm"
           sudo ln -sf /tmp/linux-6.6/include/uapi/asm-generic "$ndk_sysroot/usr/include/asm-generic"
-          # Create missing asm/types.h shim (arm64 kernel does not ship it; it just includes asm-generic/types.h)
-          echo '#include <asm-generic/types.h>' > /tmp/linux-6.6/arch/arm64/include/uapi/asm/types.h
-          echo "asm:       $(ls -la "$ndk_sysroot/usr/include/asm" | head -2)"
-          echo "asm/types.h: $(cat "$ndk_sysroot/usr/include/asm/types.h")"
+          # Auto-create shims for any missing asm/*.h that have a generic counterpart
+          ASM_DIR=/tmp/linux-6.6/arch/arm64/include/uapi/asm
+          GENERIC_DIR=/tmp/linux-6.6/include/uapi/asm-generic
+          for h in $(ls "$GENERIC_DIR"); do
+            if [ ! -f "$ASM_DIR/$h" ]; then
+              echo "#include <asm-generic/$h>" > "$ASM_DIR/$h"
+              echo "  created shim: asm/$h -> asm-generic/$h"
+            fi
+          done
+          echo "asm dir now: $(ls "$ASM_DIR")"
           echo "=== testing linux/types.h compile ==="
           printf '#include <linux/types.h>\nint main(){return 0;}' > /tmp/linux-test.c
           "$ndk_clang_dir/aarch64-linux-android21-clang" --target=aarch64-linux-gnu --sysroot="$ndk_sysroot" \
