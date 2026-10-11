@@ -82,8 +82,10 @@ jobs:
           # Link aarch64 asm/ and asm-generic/ into NDK sysroot so <asm/...> resolves
           sudo ln -sf /tmp/linux-6.6/arch/arm64/include/uapi/asm "$ndk_sysroot/usr/include/asm"
           sudo ln -sf /tmp/linux-6.6/include/uapi/asm-generic "$ndk_sysroot/usr/include/asm-generic"
-          echo "asm:       $(ls -la "$ndk_sysroot/usr/include/asm" 2>&1 | head -1)"
-          echo "asm-generic: $(ls -la "$ndk_sysroot/usr/include/asm-generic" 2>&1 | head -1)"
+          # Create missing asm/types.h shim (arm64 kernel does not ship it; it just includes asm-generic/types.h)
+          echo '#include <asm-generic/types.h>' > /tmp/linux-6.6/arch/arm64/include/uapi/asm/types.h
+          echo "asm:       $(ls -la "$ndk_sysroot/usr/include/asm" | head -2)"
+          echo "asm/types.h: $(cat "$ndk_sysroot/usr/include/asm/types.h")"
           echo "=== testing linux/types.h compile ==="
           printf '#include <linux/types.h>\nint main(){return 0;}' > /tmp/linux-test.c
           "$ndk_clang_dir/aarch64-linux-android21-clang" --target=aarch64-linux-gnu --sysroot="$ndk_sysroot" \
